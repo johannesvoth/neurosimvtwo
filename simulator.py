@@ -46,6 +46,7 @@ class Simulator:
             # I is global baseline + synaptic + any one-step injection queued
             I = (
                 self.config.input_current
+                + n.i_const
                 + incoming.get(n.id, 0.0)
                 + self._pending_injection.get(n.id, 0.0)
             )
