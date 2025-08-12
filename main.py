@@ -33,7 +33,7 @@ import random
 
 def build_demo_network(num_inputs: int = 8) -> Network:
     # Tunables for hidden layer
-    hidden_count = 16 # number of hidden neurons
+    hidden_count = 3 # number of hidden neurons
     input_to_hidden_weight = .5
     hidden_recurrent_weight = 0.5
     hidden_to_output_weight = .5
@@ -94,7 +94,7 @@ def main() -> None:
     window_size = 50
     delta = 0.24
     i_delta = 5.0
-    epochs = 3000
+    epochs = 1000
     perturbation_ratio = 1
 
     results_dir = Path("runs")
@@ -159,7 +159,7 @@ def main() -> None:
 
         # Every 100 epochs, propose meta-updates to delta and i_delta via short-horizon evaluation
         if idx % 100 == 0:
-            new_delta, new_i_delta, delta_acc, i_delta_acc = meta_tune_hyperparams(
+            new_delta, new_i_delta, delta_acc, i_delta_acc, cand_delta, cand_i_delta = meta_tune_hyperparams(
                 net,
                 sim.config,
                 manual_pattern,
@@ -169,15 +169,15 @@ def main() -> None:
                 average_mode=average_mode,
                 window_size=window_size,
                 meta_epochs=100,
-                delta_rel_step=0.2,
+                delta_rel_step=0.10,
                 i_delta_rel_step=0.2,
                 prune_threshold=0.1,
                 prune_every=10,
                 prune_start_epoch=500,
             )
             print(
-                f"Epoch {idx:04d} META: delta {delta:.3f}->{new_delta:.3f} ({'acc' if delta_acc else 'rej'}), "
-                f"i_delta {i_delta:.3f}->{new_i_delta:.3f} ({'acc' if i_delta_acc else 'rej'})",
+                f"Epoch {idx:04d} META: delta {delta:.3f}->cand {cand_delta:.3f}->{new_delta:.3f} ({'acc' if delta_acc else 'rej'}), "
+                f"i_delta {i_delta:.3f}->cand {cand_i_delta:.3f}->{new_i_delta:.3f} ({'acc' if i_delta_acc else 'rej'})",
                 flush=True,
             )
             delta, i_delta = new_delta, new_i_delta

@@ -424,10 +424,10 @@ def meta_tune_hyperparams(
     prune_threshold: float = 0.1,
     prune_every: int = 10,
     prune_start_epoch: int = 500,
-) -> Tuple[float, float, bool, bool]:
+) -> Tuple[float, float, bool, bool, float, float]:
     """Try multiplicative perturbations of delta and i_delta and accept if 100-epoch outcome improves.
 
-    Returns: (new_delta, new_i_delta, delta_accepted, i_delta_accepted).
+    Returns: (new_delta, new_i_delta, delta_accepted, i_delta_accepted, candidate_delta, candidate_i_delta).
     """
     # Evaluate baseline trajectory over meta_epochs
     baseline_model_for_delta = clone_network(model)
@@ -492,6 +492,6 @@ def meta_tune_hyperparams(
     new_i_delta = candidate_i_delta if candidate_score_for_i > baseline_score_for_i + 1e-9 else current_i_delta
     i_delta_accepted = new_i_delta != current_i_delta
 
-    return new_delta, new_i_delta, delta_accepted, i_delta_accepted
+    return new_delta, new_i_delta, delta_accepted, i_delta_accepted, candidate_delta, candidate_i_delta
 
 
