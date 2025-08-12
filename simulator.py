@@ -10,7 +10,6 @@ from network import Network, PixelOutputNeuron
 class SimulatorConfig:
     dt_ms: float = 1.0
     input_current: float = 0.0
-    synaptic_scale: float = 1.0
 
 
 @dataclass
@@ -39,7 +38,7 @@ class Simulator:
         for c in self.model.connections:
             src = self.model.find_neuron(c.source_id)
             if src and src.spiked:
-                incoming[c.target_id] = incoming.get(c.target_id, 0.0) + c.weight * self.config.synaptic_scale
+                incoming[c.target_id] = incoming.get(c.target_id, 0.0) + c.weight
 
         # Update all neurons using Euler method
         for n in self.model.neurons:

@@ -55,6 +55,16 @@ def visualize_latest(
             return
         for c, w in zip(model.connections, weights):
             c.weight = float(w)
+        # Optionally load neuron i_consts for non-input neurons only
+        i_consts = data.get("i_consts")
+        if isinstance(i_consts, list) and len(i_consts) == len(model.neurons):
+            for n, v in zip(model.neurons, i_consts):
+                if isinstance(n, PixelInputNeuron):
+                    continue
+                try:
+                    n.i_const = float(v)
+                except Exception:
+                    pass
         # Reset state after applying weights
         for n in model.neurons:
             n.v = n.c
@@ -260,6 +270,16 @@ def visualize_graph_latest(
             return
         for c, w in zip(model.connections, weights):
             c.weight = float(w)
+        # Optionally load neuron i_consts for non-input neurons only
+        i_consts = data.get("i_consts")
+        if isinstance(i_consts, list) and len(i_consts) == len(model.neurons):
+            for n, v in zip(model.neurons, i_consts):
+                if isinstance(n, PixelInputNeuron):
+                    continue
+                try:
+                    n.i_const = float(v)
+                except Exception:
+                    pass
         # Reset state after applying weights
         for n in model.neurons:
             n.v = n.c

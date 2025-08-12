@@ -20,16 +20,20 @@ from training import (
     simple_delta_train_step,
     squared_error,
     run_cycle_and_average_score,
+    prune_small_weights_train_step,
+    i_const_delta_train_step,
+    meta_tune_hyperparams,
 )
 from pathlib import Path
 import json
 import shutil
 from visualize import visualize_latest
+import random
 
 
 def build_demo_network(num_inputs: int = 8) -> Network:
     # Tunables for hidden layer
-    hidden_count = 8 # number of hidden neurons
+    hidden_count = 16 # number of hidden neurons
     input_to_hidden_weight = .5
     hidden_recurrent_weight = 0.5
     hidden_to_output_weight = .5
@@ -66,12 +70,16 @@ def build_demo_network(num_inputs: int = 8) -> Network:
                 Connection(source_id=h.id, target_id=outp.id, weight=hidden_to_output_weight)
             )
 
-    return Network(neurons=neurons, connections=connections)
+    net = Network(neurons=neurons, connections=connections)
+    # Initialize all connection weights uniformly in [-1, 1]
+    for c in net.connections:
+        c.weight = random.uniform(-1.0, 1.0)
+    return net
 
 
 def main() -> None:
     net = build_demo_network(num_inputs=8)
-    sim = Simulator(model=net, config=SimulatorConfig(dt_ms=1.0, input_current=0.0, synaptic_scale=20.0))
+    sim = Simulator(model=net, config=SimulatorConfig(dt_ms=1.0, input_current=0.0))
 
     # Manually coded single image for input neurons (True=white/ON, False=black/OFF)
     manual_pattern: List[bool] = [True, False, True, False, True, False, True, False]
@@ -84,15 +92,10 @@ def main() -> None:
     train_steps = 50
     average_mode = "infinite"  # "fixed" or "infinite"
     window_size = 50
-    delta = 0.2
+    delta = 0.24
+    i_delta = 5.0
     epochs = 3000
     perturbation_ratio = 1
-
-    # Initial score using average over steps
-    #initial_score = run_cycle_and_average_score(
-    #    net, sim.config, manual_pattern, steps=train_steps, average_mode=average_mode, window_size=window_size
-    #)
-    #print("Initial average score:", round(initial_score, 3))
 
     results_dir = Path("runs")
     # Clear previous runs for a fresh session
@@ -109,6 +112,7 @@ def main() -> None:
     print("Saving epoch snapshots to:", str(results_dir.resolve()))
 
     for idx in range(1, epochs + 1):
+        # Primary candidate: weight perturbations
         baseline_score, candidate_score, accepted = simple_delta_train_step(
             net,
             sim.config,
@@ -119,10 +123,64 @@ def main() -> None:
             window_size=window_size,
             perturbation_ratio=perturbation_ratio,
         )
-        print(
-            f"Epoch {idx:04d}: baseline={baseline_score:.3f} candidate={candidate_score:.3f} accepted={accepted}",
-            flush=True,
+        print(f"Epoch {idx:04d}: baseline={baseline_score:.3f} candidate={candidate_score:.3f} accepted={accepted}", flush=True)
+
+        # Independent candidate: adjust neuron i_const (exclude inputs)
+        ic_base, ic_cand, ic_accept = i_const_delta_train_step(
+            net,
+            sim.config,
+            manual_pattern,
+            steps=train_steps,
+            delta_i=i_delta,
+            average_mode=average_mode,
+            window_size=window_size,
+            perturbation_ratio=perturbation_ratio,
         )
+        print(f"Epoch {idx:04d} IC: baseline={ic_base:.3f} candidate={ic_cand:.3f} accepted={ic_accept}", flush=True)
+
+        # After 500 epochs, every 10th epoch run a separate pruning candidate step, independent of weight perturbations
+        pruned_accepted = None
+        prune_baseline = None
+        prune_candidate = None
+        if idx >= 500 and idx % 10 == 0:
+            prune_baseline, prune_candidate, pruned_accepted = prune_small_weights_train_step(
+                net,
+                sim.config,
+                manual_pattern,
+                steps=train_steps,
+                threshold=0.1,
+                average_mode=average_mode,
+                window_size=window_size,
+            )
+            print(
+                f"Epoch {idx:04d} PRUNE: baseline={prune_baseline:.3f} candidate={prune_candidate:.3f} accepted={pruned_accepted}",
+                flush=True,
+            )
+
+        # Every 100 epochs, propose meta-updates to delta and i_delta via short-horizon evaluation
+        if idx % 100 == 0:
+            new_delta, new_i_delta, delta_acc, i_delta_acc = meta_tune_hyperparams(
+                net,
+                sim.config,
+                manual_pattern,
+                current_delta=delta,
+                current_i_delta=i_delta,
+                train_steps=train_steps,
+                average_mode=average_mode,
+                window_size=window_size,
+                meta_epochs=100,
+                delta_rel_step=0.2,
+                i_delta_rel_step=0.2,
+                prune_threshold=0.1,
+                prune_every=10,
+                prune_start_epoch=500,
+            )
+            print(
+                f"Epoch {idx:04d} META: delta {delta:.3f}->{new_delta:.3f} ({'acc' if delta_acc else 'rej'}), "
+                f"i_delta {i_delta:.3f}->{new_i_delta:.3f} ({'acc' if i_delta_acc else 'rej'})",
+                flush=True,
+            )
+            delta, i_delta = new_delta, new_i_delta
 
         # Persist snapshot for the visualizer to load (every 10 epochs)
         if idx % 10 == 0:
@@ -131,7 +189,13 @@ def main() -> None:
                 "baseline_score": baseline_score,
                 "candidate_score": candidate_score,
                 "accepted": accepted,
+                "prune_baseline_score": prune_baseline,
+                "prune_candidate_score": prune_candidate,
+                "prune_accepted": pruned_accepted,
                 "weights": [c.weight for c in net.connections],
+                "i_consts": [n.i_const for n in net.neurons],
+                "delta": delta,
+                "i_delta": i_delta,
             }
             (results_dir / f"epoch_{idx:05d}.json").write_text(json.dumps(snapshot, indent=2))
 
@@ -140,13 +204,6 @@ def main() -> None:
     for n, is_white in zip(inputs, manual_pattern):
         n.encode(is_white)
 
-    # Final evaluation using the same average scoring
-    #final_score = run_cycle_and_average_score(
-    #    net, sim.config, manual_pattern, steps=train_steps, average_mode=average_mode, window_size=window_size
-    #)
-    #print("Final average score:", round(final_score, 3))
-
-    # Optional visualization (runs after training with current weights)
     try:
         # Pre-roll to the average-evaluation horizon, then pause
         visualize_latest(net,sim.config, steps_per_frame=1,eval_steps=train_steps,preroll=False,)
