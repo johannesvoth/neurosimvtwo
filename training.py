@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from typing import List, Tuple, Optional, Sequence
+from pathlib import Path
+import json
 import random
 
 from network import Network, PixelOutputNeuron
@@ -47,6 +49,9 @@ def squared_error(target: Sequence[bool], prediction: Sequence[bool]) -> float:
     t = _booleans_to_ints(target)
     y = _booleans_to_ints(prediction)
     return float(sum((yi - ti) * (yi - ti) for yi, ti in zip(y, t)))
+
+
+## (Windowed objective removed from active training path; latch-based endpoint used instead)
 
 
 def simple_delta_train_step(
@@ -102,11 +107,26 @@ def simple_delta_train(
     if seed is not None:
         random.seed(seed)
     history: List[Tuple[float, float, bool]] = []
-    for _ in range(iterations):
+    results_dir = Path("runs")
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    for epoch_idx in range(1, iterations + 1):
         baseline_err, candidate_err, accepted = simple_delta_train_step(
             model, sim_config, target_output, steps, delta
         )
         history.append((baseline_err, candidate_err, accepted))
+
+        # Persist epoch snapshot (weights and metrics)
+        snapshot = {
+            "epoch": epoch_idx,
+            "baseline_error": baseline_err,
+            "candidate_error": candidate_err,
+            "accepted": accepted,
+            "weights": [c.weight for c in model.connections],
+        }
+        (results_dir / f"epoch_{epoch_idx:05d}.json").write_text(
+            json.dumps(snapshot, indent=2)
+        )
     return history
 
 

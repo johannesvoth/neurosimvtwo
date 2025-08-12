@@ -20,6 +20,10 @@ from training import (
     simple_delta_train_step,
     squared_error,
 )
+from pathlib import Path
+import json
+import shutil
+from visualize import visualize_latest
 
 
 def build_demo_network(num_inputs: int = 8) -> Network:
@@ -39,7 +43,7 @@ def build_demo_network(num_inputs: int = 8) -> Network:
 
     # Output neurons mirror the input size so it forms an image
     output_neurons: List[PixelOutputNeuron] = make_pixel_output_neurons(
-        start_id=num_inputs + hidden_count, count=num_inputs, on_duration_steps=5
+        start_id=num_inputs + hidden_count, count=num_inputs, on_duration_steps= 5
     )
 
     neurons: List[Neuron] = [*input_neurons, *hidden_neurons, *output_neurons]
@@ -68,8 +72,6 @@ def main() -> None:
     net = build_demo_network(num_inputs=8)
     sim = Simulator(model=net, config=SimulatorConfig(dt_ms=1.0, input_current=0.0, synaptic_scale=20.0))
 
-    # Minimal usage example
-    steps = 150
     # Manually coded single image for input neurons (True=white/ON, False=black/OFF)
     manual_pattern: List[bool] = [True, False, True, False, True, False, True, False]
     inputs = [n for n in net.neurons if isinstance(n, PixelInputNeuron)]
@@ -77,14 +79,29 @@ def main() -> None:
         n.encode(is_white)
     print("Input image:", manual_pattern)
 
-    # Training routine: run simple delta training for X epochs
-    train_steps = 120
+    # Training routine: latch-based endpoint at a single step
+    train_steps = 60
     delta = 0.1
-    epochs = 1000
+    epochs = 1500
 
+    # Initial error using single endpoint readout
     initial_pred = read_output_binary_image([n for n in net.neurons if isinstance(n, PixelOutputNeuron)])
     initial_err = squared_error(manual_pattern, initial_pred)
     print("Initial error:", initial_err)
+
+    results_dir = Path("runs")
+    # Clear previous runs for a fresh session
+    if results_dir.exists():
+        try:
+            for p in results_dir.iterdir():
+                if p.is_file():
+                    p.unlink()
+                elif p.is_dir():
+                    shutil.rmtree(p)
+        except Exception as e:
+            print("Warning: failed to fully clear runs directory:", e)
+    results_dir.mkdir(parents=True, exist_ok=True)
+    print("Saving epoch snapshots to:", str(results_dir.resolve()))
 
     for idx in range(1, epochs + 1):
         baseline_err, candidate_err, accepted = simple_delta_train_step(
@@ -94,6 +111,17 @@ def main() -> None:
             f"Epoch {idx:04d}: baseline={baseline_err:.3f} candidate={candidate_err:.3f} accepted={accepted}",
             flush=True,
         )
+
+        # Persist snapshot for the visualizer to load (every 10 epochs)
+        if idx % 10 == 0:
+            snapshot = {
+                "epoch": idx,
+                "baseline_error": baseline_err,
+                "candidate_error": candidate_err,
+                "accepted": accepted,
+                "weights": [c.weight for c in net.connections],
+            }
+            (results_dir / f"epoch_{idx:05d}.json").write_text(json.dumps(snapshot, indent=2))
 
     # Reset state and re-encode inputs for a clean rollout after training
     reset_all_states(net)
@@ -109,6 +137,13 @@ def main() -> None:
     final_err = squared_error(manual_pattern, final_output)
     print("Final output image:", final_output)
     print("Final error:", final_err)
+
+    # Optional visualization (runs after training with current weights)
+    try:
+        # Pre-roll to the endpoint view, then pause
+        visualize_latest(net, sim.config, steps_per_frame=10, eval_steps=train_steps, preroll=True)
+    except Exception as e:
+        print("Visualization failed:", e)
 
 
 if __name__ == "__main__":
