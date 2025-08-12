@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict
 
-from network import Network
+from network import Network, PixelOutputNeuron
 
 
 @dataclass
@@ -68,6 +68,13 @@ class Simulator:
                 n.spiked = True
             else:
                 n.spiked = False
+
+            # For output neurons, manage latched "on" duration after spikes
+            if isinstance(n, PixelOutputNeuron):
+                if n.spiked:
+                    n.on_steps_remaining = n.on_duration_steps
+                elif n.on_steps_remaining > 0:
+                    n.on_steps_remaining -= 1
 
         # clear one-shot injections
         self._pending_injection.clear()

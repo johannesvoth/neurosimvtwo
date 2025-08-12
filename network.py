@@ -119,3 +119,113 @@ def show_random_binary_image(inputs: List[PixelInputNeuron], white_probability: 
 __all__ += ["PixelInputNeuron", "make_pixel_input_neurons", "show_random_binary_image"]
 
 
+# Hidden-layer utilities
+def make_hidden_neurons(
+    start_id: int,
+    count: int,
+    preset: str = "fast_spiking",
+    *,
+    a: Optional[float] = None,
+    b: Optional[float] = None,
+    c: Optional[float] = None,
+    d: Optional[float] = None,
+) -> List[Neuron]:
+    """Create a list of hidden neurons using a named preset or custom overrides.
+
+    Supported presets are the classmethods on Neuron: regular_spiking, intrinsically_bursting,
+    chattering, fast_spiking, low_threshold_spiking, resonator.
+    If any of a/b/c/d are provided, they will override the chosen preset per neuron.
+    """
+    if not hasattr(Neuron, preset):
+        raise ValueError(f"Unknown preset '{preset}'.")
+
+    factory = getattr(Neuron, preset)
+    neurons: List[Neuron] = []
+    for idx in range(count):
+        n = factory(neuron_id=start_id + idx)
+        if a is not None:
+            n.a = a
+        if b is not None:
+            n.b = b
+        if c is not None:
+            n.c = c
+        if d is not None:
+            n.d = d
+        neurons.append(n)
+    return neurons
+
+
+def fully_connect(
+    neuron_ids: List[int], weight: float = 1.0, include_self: bool = False
+) -> List[Connection]:
+    """Create all-to-all connections between the given neuron IDs.
+
+    By default, self-connections are excluded.
+    """
+    connections: List[Connection] = []
+    for src in neuron_ids:
+        for tgt in neuron_ids:
+            if not include_self and src == tgt:
+                continue
+            connections.append(Connection(source_id=src, target_id=tgt, weight=weight))
+    return connections
+
+
+__all__ += ["make_hidden_neurons", "fully_connect"]
+
+
+def reset_all_states(model: Network) -> None:
+    """Reset neuron states for a fair evaluation start.
+
+    - Membrane potential v -> c
+    - Recovery variable u -> b*v
+    - Clear spike flags
+    - Clear output latches
+    """
+    for n in model.neurons:
+        n.v = n.c
+        n.u = n.b * n.v
+        n.spiked = False
+        # Clear any output latch state if present
+        if isinstance(n, PixelOutputNeuron):  # type: ignore[name-defined]
+            n.on_steps_remaining = 0
+
+
+# Pixel output neuron decodes a single binary pixel from activity
+@dataclass
+class PixelOutputNeuron(Neuron):
+    # Number of steps to stay "on" after a spike
+    on_duration_steps: int = 10
+    # Internal countdown of remaining "on" steps
+    on_steps_remaining: int = 0
+
+    def decode(self) -> bool:
+        return self.on_steps_remaining > 0
+
+    @classmethod
+    def create(
+        cls, neuron_id: int, on_duration_steps: int = 5
+    ) -> "PixelOutputNeuron":
+        return cls(id=neuron_id, on_duration_steps=on_duration_steps)
+
+
+def make_pixel_output_neurons(
+    start_id: int, count: int, on_duration_steps: int = 5
+) -> List[PixelOutputNeuron]:
+    return [
+        PixelOutputNeuron.create(neuron_id=start_id + idx, on_duration_steps=on_duration_steps)
+        for idx in range(count)
+    ]
+
+
+def read_output_binary_image(outputs: List[PixelOutputNeuron]) -> List[bool]:
+    return [n.decode() for n in outputs]
+
+
+__all__ += [
+    "PixelOutputNeuron",
+    "make_pixel_output_neurons",
+    "read_output_binary_image",
+]
+
+
