@@ -19,6 +19,7 @@ from simulator import Simulator, SimulatorConfig
 from training import (
     simple_delta_train_step,
     squared_error,
+    run_cycle_and_average_score,
 )
 from pathlib import Path
 import json
@@ -28,10 +29,10 @@ from visualize import visualize_latest
 
 def build_demo_network(num_inputs: int = 8) -> Network:
     # Tunables for hidden layer
-    hidden_count = 6 # number of hidden neurons
-    input_to_hidden_weight = 1.0
+    hidden_count = 8 # number of hidden neurons
+    input_to_hidden_weight = .5
     hidden_recurrent_weight = 0.5
-    hidden_to_output_weight = 1.0
+    hidden_to_output_weight = .5
 
     input_neurons: List[PixelInputNeuron] = make_pixel_input_neurons(
         start_id=0, count=num_inputs, i_on=20.0, d=0.2
@@ -43,7 +44,7 @@ def build_demo_network(num_inputs: int = 8) -> Network:
 
     # Output neurons mirror the input size so it forms an image
     output_neurons: List[PixelOutputNeuron] = make_pixel_output_neurons(
-        start_id=num_inputs + hidden_count, count=num_inputs, on_duration_steps= 5
+        start_id=num_inputs + hidden_count, count=num_inputs, on_duration_steps= 15
     )
 
     neurons: List[Neuron] = [*input_neurons, *hidden_neurons, *output_neurons]
@@ -76,18 +77,22 @@ def main() -> None:
     manual_pattern: List[bool] = [True, False, True, False, True, False, True, False]
     inputs = [n for n in net.neurons if isinstance(n, PixelInputNeuron)]
     for n, is_white in zip(inputs, manual_pattern):
-        n.encode(is_white)
+        n.encode(is_white) # set the input current to the value of the pixel
     print("Input image:", manual_pattern)
 
-    # Training routine: latch-based endpoint at a single step
-    train_steps = 60
-    delta = 0.1
-    epochs = 1500
+    # Training routine: per-step average scoring on latched outputs
+    train_steps = 50
+    average_mode = "infinite"  # "fixed" or "infinite"
+    window_size = 50
+    delta = 0.2
+    epochs = 3000
+    perturbation_ratio = 1
 
-    # Initial error using single endpoint readout
-    initial_pred = read_output_binary_image([n for n in net.neurons if isinstance(n, PixelOutputNeuron)])
-    initial_err = squared_error(manual_pattern, initial_pred)
-    print("Initial error:", initial_err)
+    # Initial score using average over steps
+    #initial_score = run_cycle_and_average_score(
+    #    net, sim.config, manual_pattern, steps=train_steps, average_mode=average_mode, window_size=window_size
+    #)
+    #print("Initial average score:", round(initial_score, 3))
 
     results_dir = Path("runs")
     # Clear previous runs for a fresh session
@@ -104,11 +109,18 @@ def main() -> None:
     print("Saving epoch snapshots to:", str(results_dir.resolve()))
 
     for idx in range(1, epochs + 1):
-        baseline_err, candidate_err, accepted = simple_delta_train_step(
-            net, sim.config, manual_pattern, steps=train_steps, delta=delta
+        baseline_score, candidate_score, accepted = simple_delta_train_step(
+            net,
+            sim.config,
+            manual_pattern,
+            steps=train_steps,
+            delta=delta,
+            average_mode=average_mode,
+            window_size=window_size,
+            perturbation_ratio=perturbation_ratio,
         )
         print(
-            f"Epoch {idx:04d}: baseline={baseline_err:.3f} candidate={candidate_err:.3f} accepted={accepted}",
+            f"Epoch {idx:04d}: baseline={baseline_score:.3f} candidate={candidate_score:.3f} accepted={accepted}",
             flush=True,
         )
 
@@ -116,8 +128,8 @@ def main() -> None:
         if idx % 10 == 0:
             snapshot = {
                 "epoch": idx,
-                "baseline_error": baseline_err,
-                "candidate_error": candidate_err,
+                "baseline_score": baseline_score,
+                "candidate_score": candidate_score,
                 "accepted": accepted,
                 "weights": [c.weight for c in net.connections],
             }
@@ -128,20 +140,20 @@ def main() -> None:
     for n, is_white in zip(inputs, manual_pattern):
         n.encode(is_white)
 
-    # Single evaluation cycle and final readout
-    eval_steps = train_steps
-    for _ in range(eval_steps):
-        sim.step()
-    output_neurons = [n for n in net.neurons if isinstance(n, PixelOutputNeuron)]
-    final_output = read_output_binary_image(output_neurons)
-    final_err = squared_error(manual_pattern, final_output)
-    print("Final output image:", final_output)
-    print("Final error:", final_err)
+    # Final evaluation using the same average scoring
+    #final_score = run_cycle_and_average_score(
+    #    net, sim.config, manual_pattern, steps=train_steps, average_mode=average_mode, window_size=window_size
+    #)
+    #print("Final average score:", round(final_score, 3))
 
     # Optional visualization (runs after training with current weights)
     try:
-        # Pre-roll to the endpoint view, then pause
-        visualize_latest(net, sim.config, steps_per_frame=10, eval_steps=train_steps, preroll=True)
+        # Pre-roll to the average-evaluation horizon, then pause
+        visualize_latest(net,sim.config, steps_per_frame=1,eval_steps=train_steps,preroll=False,)
+
+        from visualize import visualize_graph_latest
+        visualize_graph_latest(net, sim.config, steps_per_frame=1, preroll=False)
+    
     except Exception as e:
         print("Visualization failed:", e)
 
